@@ -47,8 +47,8 @@ def preprocess_data():
 
     train, test = label_encoding(train, test)
     train, test = make_extra_variables(train, test)
-    train = remove_outliers(train)
-    train, test = refactor_data(train, test)
+    train, test = remove_outliers(train, test)
+    train, test = reindex_data(train, test)
 
     train.to_csv('customer_data/train.csv', index=False)
     test.to_csv('customer_data/test.csv', index=False)
@@ -76,7 +76,7 @@ def label_encoding(train: pd.DataFrame, test: pd.DataFrame) -> tuple:
 
 def make_extra_variables(train: pd.DataFrame, test: pd.DataFrame) -> tuple:
     """
-    파생변수를 생성하고 파생변수를 제거하는 함수
+    파생변수를 생성하는 함수
     """
 
     train, test = train.copy(), test.copy()
@@ -93,12 +93,10 @@ def make_extra_variables(train: pd.DataFrame, test: pd.DataFrame) -> tuple:
         df['Income_Level'] = [row['Income']/max_income.loc[row['Age_Range']][0] for _,row in df.iterrows()]
         df['Income_Per'] = df['Income']/(df['Kidhome']+1)
 
-        purchase_cat = [f'Num{t}Purchases' for t in ['Deals','Web','Catalog','Store']]
-        df['NumPurchases'] = [sum(row) for _,row in df[purchase_cat].iterrows()]
-        purchase_dict = {cat: i for i, cat in enumerate(purchase_cat[1:])}
-        df['Perferred_Purchase'] = [purchase_dict[row.index[row.argmax()]] for _,row in df[purchase_cat[1:]].iterrows()]
-        num_cat = [df[col].apply(lambda x: 7 if x > 7 else x) for col in purchase_cat+['NumWebVisitsMonth']]
-        df[purchase_cat+['NumWebVisitsMonth']] = pd.DataFrame(num_cat).T
+        purchase_list = [f'Num{cat}Purchases' for cat in['Web','Catalog','Store']]
+        df['NumPurchases'] = [sum(row) for _,row in df[purchase_list].iterrows()]
+        purchase_dict = {cat: i for i, cat in enumerate(purchase_list)}
+        df['Perferred_Purchase'] = [purchase_dict[row.index[row.argmax()]] for _,row in df[purchase_list].iterrows()]
 
         campains = [f'AcceptedCmp{i}' for i in range(1,6)]+['Response']
         df['NumAcceptedCmp'] = sum([df[campain] for campain in campains])
@@ -106,29 +104,34 @@ def make_extra_variables(train: pd.DataFrame, test: pd.DataFrame) -> tuple:
     return (train, test)
 
 
-def remove_outliers(train: pd.DataFrame) -> pd.DataFrame:
+def remove_outliers(train: pd.DataFrame, test: pd.DataFrame) -> tuple:
     """
     이상치를 제거하는 함수
     """
 
-    train = train.copy()
+    train, test = train.copy(), test.copy()
 
     columns = ['Year_Birth','Income']
     for column, outlier in zip(columns,[0,2]):
         cutted_data = pd.cut(train[column],bins=3,labels=[0,1,2])
         train = train[cutted_data != outlier]
 
-    return train
+    # num_cat = [f'Num{cat}Purchases' for cat in['Deals','Web','Catalog','Store']]+['NumWebVisitsMonth']
+    for df in [train, test]:
+    #     for column in num_cat:
+    #         df[column] = df[column].apply(lambda x: 13 if x > 13 else x)
+        df.drop(['Year_Birth','Dt_Customer'], axis=1, inplace=True)
+
+    return (train, test)
 
 
-def refactor_data(train: pd.DataFrame, test: pd.DataFrame) -> tuple:
+def reindex_data(train: pd.DataFrame, test: pd.DataFrame) -> tuple:
     """
-    불필요한 열을 제거하고 전체 열을 정렬하는 함수
+    열을 정렬하는 함수
     """
 
     train, test = train.copy(), test.copy()
 
-    [df.drop(['Year_Birth','Dt_Customer'], axis=1, inplace=True) for df in [train,test]]
     columns = train.drop(['id','target'], axis=1).columns.tolist()
     train = train.reindex(columns=['id']+sorted(columns)+['target'])
     test = test.reindex(columns=['id']+sorted(columns))
@@ -169,14 +172,15 @@ def feature_encoding(train: pd.DataFrame, test: pd.DataFrame, validation=tuple()
         x_train, x_test, y_train, y_test = validation
 
     numerical_transformer = StandardScaler()
-    numerical_features = ['Age','Days_Customer','Income','Income_Level','Income_Per',
-                            'NumAcceptedCmp','NumPurchases','Recency']
+    numerical_features = ['Age','Age_Range','Days_Customer','Income','Income_Level','Income_Per',
+                            'NumAcceptedCmp','NumCatalogPurchases','NumDealsPurchases',
+                            'NumStorePurchases','NumWebPurchases','NumWebVisitsMonth',
+                            'NumPurchases','Recency']
 
     categorical_transformer = OneHotEncoder(categories='auto', handle_unknown='ignore')
-    categorical_features = ['AcceptedCmp1','AcceptedCmp2','AcceptedCmp3','AcceptedCmp4','AcceptedCmp5',
-                            'Age_Range','Complain','Education','Kidhome','Marital_Status',
-                            'NumCatalogPurchases','NumDealsPurchases','NumStorePurchases',
-                            'NumWebPurchases','NumWebVisitsMonth','Perferred_Purchase','Response','Teenhome']
+    categorical_features = ['AcceptedCmp1','AcceptedCmp2','AcceptedCmp3','AcceptedCmp4',
+                            'AcceptedCmp5','Complain','Education','Kidhome',
+                            'Marital_Status','Perferred_Purchase','Response','Teenhome']
 
     preprocessor = ColumnTransformer(
         transformers=[
@@ -185,7 +189,7 @@ def feature_encoding(train: pd.DataFrame, test: pd.DataFrame, validation=tuple()
 
     pipe = Pipeline(steps=[('preprocessor', preprocessor)])
     train_data = pipe.fit_transform(train.drop(['id','target'], axis=1))
-    test_data = pipe.transform(test)
+    test_data = pipe.transform(test.drop(['id'], axis=1))
 
     if validation:
         validation = (pipe.transform(x_train), pipe.transform(x_test), y_train, y_test)
